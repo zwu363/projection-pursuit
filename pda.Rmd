@@ -1,0 +1,380 @@
+---
+title: "projection pursuit"
+output: html_document
+---
+
+PPindex.class
+PP.optimize.random: index.best, proj.best
+PP.optimize.anneal
+PP.optimize.Huber
+PP.optimize.plot
+
+```{r packages}
+#library(devtools)
+#install_github("EK-Lee/classPP")
+library(classPP)
+library(cancerclass) #leukemia data
+library(DiscriMiner) #withinSS
+library(Pursuit)#https://github.com/cran/Pursuit/blob/master/R/PP_Optimizer_English.R
+#https://cran.r-project.org/web/packages/Pursuit/Pursuit.pdf
+```
+
+## Function BW: get BW value for each variable 
+
+```{r BW}
+#BW value of variable j
+#x_j: values of variable j of all observations
+#y_i: class of ith observation
+#cls: all unique classes
+BW = function(x_j, y_i, cls){
+  d = 0 #denominator
+  n = 0 #numerator
+  x_j_bar = mean(x_j) #mean of variable j
+  for (k in 1:length(cls)){
+      sum_x_k = 0 #sum of x_ij of class k
+      count_k = 0 #count of class k in the sample
+    for (i in 1:length(x_j)){
+      if (y_i[i] == cls[k]){
+        sum_x_k = x_j[i] + sum_x_k
+        count_k = count_k + 1
+      }
+      if (y_i[i] == cls[k]){
+        n = n + (sum_x_k/count_k - x_j_bar)^2
+        d = d + (sum_x_k/count_k - x_j[i])^2
+      }
+    }
+  }
+  return (n/d)
+}
+```
+
+## Function S: select the appropriate $\lambda$
+
+```{r S}
+S = function(data, class, method, dim){
+  S = c()
+  for (i in seq(0, 1, 0.01)){
+    PP.opt = PP.optimize.anneal(method,dim,data,class,lambda = i)
+    W = withinSS(data%*%PP.opt[["proj.best"]], class)
+    S = c(S, sum(diag(W))/2/nrow(data))
+  }
+  smoothingSpline = smooth.spline(seq(0, 1, 0.01), S, spar=0.8)
+  plot(seq(0, 1, 0.01), S)
+  lines(smoothingSpline, col = "red")
+  abline(h=1, col="blue")
+}
+```
+
+## 1. Simulated Example
+
+- two classes
+- 39 dimensions
+- each class has 20 data points
+- 1st dimension: class 1->N(2.2, 1), class 2->N(-2.2, 1)
+- other dimension: N(0, 1)
+
+### 2-d projection using package classPP
+
+```{r 1-2d}
+set.seed(123)
+toy = as.data.frame(cbind(c(rnorm(20, 2.2), rnorm(20, -2.2)), matrix(rnorm(40*38),,38)))
+class = c(rep(1, 20), rep(2, 20))
+
+par(mfrow = c(2, 2)) 
+
+PP.opt.lda.2 = PP.optimize.anneal("LDA",2,toy,class)
+PP.optimize.plot(PP.opt.lda.2,toy,class)
+title("LDA")
+
+PP.opt.pda0.2 = PP.optimize.anneal("PDA",2,toy,class,lambda = 0)
+PP.optimize.plot(PP.opt.pda0.2,toy,class)
+title("PDA, lambda=0")
+
+PP.opt.pda4.2 = PP.optimize.anneal("PDA",2,toy,class,lambda = 0.4)
+PP.optimize.plot(PP.opt.pda4.2,toy,class)
+title("PDA, lambda=0.4")
+
+PP.opt.pda7.2 = PP.optimize.anneal("PDA",2,toy,class,lambda = 0.7)
+PP.optimize.plot(PP.opt.pda7.2,toy,class)
+title("PDA, lambda=0.7")
+```
+
+### 1-d projection using package classPP
+
+```{r 1-1d}
+par(mfrow = c(2, 2)) 
+
+hist(toy[,1], main="Real cluster of the first variable", xlim=c(-5, 5), breaks=seq(-5,5,1))
+text(toy[,1], rep(4, 40), labels = class)
+
+PP.opt.lda.1 = PP.optimize.anneal("LDA",1,toy,class)
+proj.data = as.matrix(toy)%*%PP.opt.lda.1$proj.best
+hist(proj.data, main="LDA", xlim=c(-5, 5), breaks=seq(-5,5,1)) 
+text(proj.data, rep(4, 40), labels = class)
+
+PP.opt.pda0.1 = PP.optimize.anneal("PDA",1,toy,class,lambda = 0)
+proj.data = as.matrix(toy)%*%PP.opt.pda0.1$proj.best
+hist(proj.data, main="PDA, lambda=0", xlim=c(-5, 5), breaks=seq(-5,5,1))
+text(proj.data, rep(4, 40), labels = class)
+
+PP.opt.pda9.1 = PP.optimize.anneal("PDA",1,toy,class,lambda = 0.9)
+proj.data = as.matrix(toy)%*%PP.opt.pda9.1$proj.best
+hist(proj.data, main="PDA, lambda=0.9", xlim=c(-5, 5), breaks=seq(-5,5,1)) 
+text(proj.data, rep(4, 40), labels = class)
+```
+
+### LDA using both classPP and Pursuit
+
+```{r 1-lda, include = FALSE}
+proj.data = as.matrix(toy)%*%PP.opt.lda.1$proj.best
+pp.lda.1.t = PP_Optimizer(toy, class, findex="LDA", dimproj=1)
+pp.lda.1.f = PP_Optimizer(toy, class, findex="LDA", dimproj=1, sphere = FALSE)
+```
+```{r}
+par(mfrow = c(2, 2)) 
+
+hist(toy[,1], main="Real cluster of the first variable", xlim=c(-5, 5), breaks=seq(-5,5,1))
+text(toy[,1], rep(4, 40), labels = class)
+
+hist(proj.data, main="LDA (classPP)", xlim=c(-5, 5), breaks=seq(-5,5,1))
+text(proj.data, rep(4, 40), labels = class)
+
+hist(pp.lda.1.t[["proj.data"]][,1], main="LDA (Pursuit sphere = TRUE)", xlim=c(-5, 5), breaks=seq(-5,5,1))
+text(pp.lda.1.t[["proj.data"]][,1], rep(4, 40), labels = class)
+
+hist(pp.lda.1.f[["proj.data"]][,1], main="LDA (Pursuit sphere = FALSE)", xlim=c(-5, 5), breaks=seq(-5,5,1))
+text(pp.lda.1.f[["proj.data"]][,1], rep(4, 40), labels = class)
+```
+
+### Variable selection
+
+- compare BW value to projection coefficients
+  - no correlation between variables, similar performance
+- for the first variable coefficient, both LDA and PDA provides a much larger value (contrary to the findings in the paper)
+
+```{r 1-var}
+BW_value = c()
+for (i in 1:ncol(toy)){
+  BW_value = c(BW_value, BW(as.numeric(toy[,i]), class, c(1, 2)))
+}
+
+par(mfrow = c(3, 2)) 
+barplot(height = as.numeric(abs(PP.opt.lda.1[["proj.best"]])), names = as.factor(1:39))
+title("LDA (classPP)")
+barplot(height = as.numeric(abs(PP.opt.pda9.1[["proj.best"]])), names = as.factor(1:39))
+title("PDA, lambda = 0.6")
+barplot(height = as.numeric(abs(pp.lda.1.t[["vector.opt"]])), names = as.factor(1:39))
+title("LDA (Pursuit sphere = TRUE)")
+barplot(height = as.numeric(abs(pp.lda.1.f[["vector.opt"]])), names = as.factor(1:39))
+title("LDA (Pursuit sphere = FALSE)")
+barplot(height = BW_value, names = as.factor(1:39))
+title("BW")
+```
+
+## 2. Leukemia example
+
+- 72 leukemia patients
+- 47 "ALL"
+  - 38  "ALL B-cell"
+  - 9   "ALL T-cell"
+- 25 "AML"
+- 3571 genes
+
+https://hastie.su.domains/CASI_files/DATA/leukemia.html
+df = read.csv("http://hastie.su.domains/CASI_files/DATA/leukemia_small.csv")
+ 
+```{r 2-leukemia}
+data("GOLUB1") #leukemia data
+df = as.data.frame(scale(GOLUB1@assayData[["exprs"]])) #scale????
+cls = GOLUB1@phenoData@data[["class"]] #ALL, AML
+ALL = GOLUB1@phenoData@data[["type"]] #ALL_Tcell, ALL_Bcell
+class = c()
+for (i in 1:length(cls))
+    class = c(class, trimws(paste(cls[i], ALL[i])))
+
+BW_value = c()
+for (i in 1:nrow(df)){
+  BW_value = c(BW_value, BW(as.numeric(df[i,]), class, c("ALL T-cell", "ALL B-cell", "AML")))
+}
+
+index <- which(BW_value >= sort(BW_value, decreasing=T)[40], arr.ind=TRUE) #variables of top 40 BW value
+df_bw = df[index,]
+```
+
+### $\lambda$ selection for p=40
+
+```{r 2-S}
+#par(mfrow = c(1, 2)) 
+S(t(df_bw), class, "PDA", 2)
+title("p = 40")
+#S(t(df), class, "PDA", 2)
+#title("Entire dataset")
+```
+
+
+```{r 2-split}
+ind = sample(1:72, 27, replace=FALSE)
+test = df_bw[, ind]
+train = df_bw[, -ind]
+cls_test = class[ind]
+cls_train = class[-ind]
+```
+
+```{r 2-plot_test_train}
+plot_test_train = function(proj.data.test, proj.data.train, cls_test, cls_train){
+  lim = c(min(min(proj.data.test), min(proj.data.train)), 
+          max(max(proj.data.test), max(proj.data.train)))
+  plot(proj.data.test[,1][cls_test == "AML"], proj.data.test[,2][cls_test == "AML"], pch = 1, xlim = lim, ylim= lim, xlab = "", ylab = "", col = "darkgrey")
+  points(proj.data.test[,1][cls_test == "ALL B-cell"], proj.data.test[,2][cls_test == "ALL B-cell"], pch = 2, col = "darkgrey")
+  points(proj.data.test[,1][cls_test == "ALL T-cell"], proj.data.test[,2][cls_test == "ALL T-cell"], pch = 3, col = "darkgrey")
+  text(proj.data.train[,1], proj.data.train[,2], as.numeric(factor(cls_train)), cex=1)
+}
+```
+
+### p=40
+
+```{r 2-40}
+par(mfrow = c(2, 2)) 
+
+PP.opt = PP.optimize.anneal("LDA",2,t(train),cls_train)
+proj.data.test = as.matrix(t(test))%*%PP.opt$proj.best
+proj.data.train = as.matrix(t(train))%*%PP.opt$proj.best
+plot_test_train(proj.data.test, proj.data.train, cls_test, cls_train)
+title("LDA")
+
+PP.opt = PP.optimize.anneal("PDA",2,t(train),cls_train,lambda = 0)
+proj.data.test = as.matrix(t(test))%*%PP.opt$proj.best
+proj.data.train = as.matrix(t(train))%*%PP.opt$proj.best
+plot_test_train(proj.data.test, proj.data.train, cls_test, cls_train)
+title("PDA, lambda=0")
+
+PP.opt = PP.optimize.anneal("PDA",2,t(train),cls_train,lambda = 0.4)
+proj.data.test = as.matrix(t(test))%*%PP.opt$proj.best
+proj.data.train = as.matrix(t(train))%*%PP.opt$proj.best
+plot_test_train(proj.data.test, proj.data.train, cls_test, cls_train)
+title("PDA, lambda=0.4")
+
+PP.opt = PP.optimize.anneal("PDA",2,t(train),cls_train,lambda = 0.8)
+proj.data.test = as.matrix(t(test))%*%PP.opt$proj.best
+proj.data.train = as.matrix(t(train))%*%PP.opt$proj.best
+plot_test_train(proj.data.test, proj.data.train, cls_test, cls_train)
+title("PDA, lambda=0.8")
+```
+
+### p=3571
+
+```{r 2-3571}
+test = df[, ind]
+train = df[, -ind]
+
+par(mfrow = c(2, 2)) 
+
+PP.opt = PP.optimize.anneal("LDA",2,t(train),cls_train)
+proj.data.test = as.matrix(t(test))%*%PP.opt$proj.best
+proj.data.train = as.matrix(t(train))%*%PP.opt$proj.best
+plot_test_train(proj.data.test, proj.data.train, cls_test, cls_train)
+title("LDA")
+
+PP.opt = PP.optimize.anneal("PDA",2,t(train),cls_train,lambda = 0)
+proj.data.test = as.matrix(t(test))%*%PP.opt$proj.best
+proj.data.train = as.matrix(t(train))%*%PP.opt$proj.best
+plot_test_train(proj.data.test, proj.data.train, cls_test, cls_train)
+title("PDA, lambda=0")
+
+PP.opt = PP.optimize.anneal("PDA",2,t(train),cls_train,lambda = 0.4)
+proj.data.test = as.matrix(t(test))%*%PP.opt$proj.best
+proj.data.train = as.matrix(t(train))%*%PP.opt$proj.best
+plot_test_train(proj.data.test, proj.data.train, cls_test, cls_train)
+title("PDA, lambda=0.4")
+
+PP.opt = PP.optimize.anneal("PDA",2,t(train),cls_train,lambda = 0.8)
+proj.data.test = as.matrix(t(test))%*%PP.opt$proj.best
+proj.data.train = as.matrix(t(train))%*%PP.opt$proj.best
+plot_test_train(proj.data.test, proj.data.train, cls_test, cls_train)
+title("PDA, lambda=0.8")
+```
+
+### p=3571
+
+- compare 1-dimensional projection to 2-dimensional projection
+
+```{r all}
+par(mfrow = c(2, 2)) 
+
+PP.opt = PP.optimize.anneal("LDA",2,t(df),class)
+PP.optimize.plot(PP.opt,t(df),class)
+title("LDA")
+
+PP.opt = PP.optimize.anneal("LDA",1,t(df),class)
+PP.optimize.plot(PP.opt,t(df),class)
+title("LDA")
+
+PP.opt = PP.optimize.anneal("PDA",2,t(df),class,lambda = 0.8)
+PP.optimize.plot(PP.opt,t(df),class)
+title("PDA, lambda=0.8")
+
+PP.opt = PP.optimize.anneal("PDA",1,t(df),class,lambda = 0.8)
+PP.optimize.plot(PP.opt,t(df),class)
+title("PDA, lambda=0.8")
+```
+
+### prcomp
+- singular value decomposition
+- cannot apply to big p, small n
+
+```{r}
+# pp = PP_Optimizer(data = t(train), class = cls_train, findex = "lda", optmethod = "GTSA", dimproj = 2, sphere=FALSE)
+# 
+# proj.data.train = as.matrix(t(train)) %*% matrix(c(pp[["vector.opt"]][,1], pp[["vector.opt"]][,2]), ncol = 2)
+# proj.data.train = as.matrix(t(test)) %*% matrix(c(pp[["vector.opt"]][,1], pp[["vector.opt"]][,2]), ncol = 2)
+# 
+# plot_test_train(proj.data.test, proj.data.train, cls_test, cls_train)
+# 
+# p1 = pp[["proj.data"]][["Projection 1"]]
+# p2 = pp[["proj.data"]][["Projection 2"]]
+# plot(p1, p2)
+# plot(proj[,1], proj[,2])
+# Plot.PP(pp)
+# 
+# 
+# barplot(height = abs(pp[["vector.opt"]][,1]), names = as.factor(1:40))
+# Plot.PP(pp)
+```
+
+### Variable selection
+
+```{r}
+PP.opt.lda = PP.optimize.anneal("LDA",1,t(df_bw),class)
+PP.opt.pda0 = PP.optimize.anneal("PDA",1,t(df_bw),class,lambda = 0)
+PP.opt.pda = PP.optimize.anneal("PDA",1,t(df_bw),class,lambda = 0.8)
+par(mfrow = c(1, 3)) 
+barplot(height = as.numeric(abs(PP.opt.lda[["proj.best"]])), names = as.factor(1:40))
+title("LDA")
+barplot(height = as.numeric(abs(PP.opt.pda0[["proj.best"]])), names = as.factor(1:40))
+title("PDA, lambda = 0")
+barplot(height = as.numeric(abs(PP.opt.pda[["proj.best"]])), names = as.factor(1:40))
+title("PDA, lambda = 0.8")
+```
+
+
+library(tourr)
+lda_pp(toy, class)
+
+https://sebastianraschka.com/Articles/2014_python_lda.html
+
+maximum likelihood estimate of covariance matrix
+#library(rags2ridges) covML
+#Ys  <- scale(df_bw, center = TRUE, scale = FALSE)
+#cov_ml = crossprod(Ys)/nrow(Ys) 
+
+Bayesian estimate
+#cov = cov(df_bw)
+#cov = (1-i)*cov_ml+i*diag(cov_ml)
+
+$A^{T}WA$
+#x_hat = (diag(cov))^(-1/2)*(df_bw-sum(df_bw)/nrow(df_bw)/ncol(df_bw))
+#x_hat = (diag(cov(df_bw)))^(-1/2)*(df_bw-sum(df_bw)/nrow(df_bw)/ncol(df_bw))
+#W = withinSS(t(x_hat), class)
+#S = c(S, t(PP.opt[["proj.best"]])%*%W%*%PP.opt[["proj.best"]])
+
+
